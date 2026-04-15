@@ -1,16 +1,25 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { Navigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 
-// IMPORTANT: Fully REPLACE this with your own code
-const PlaceholderIndex = () => {
-  // PLACEHOLDER: Replace this entire return statement with the user's app.
-  // The inline background color is intentionally not part of the design system.
-  return (
-    <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#fcfbf8' }}>
-      <img data-lovable-blank-page-placeholder="REMOVE_THIS" src="/placeholder.svg" alt="Your app will live here!" />
-    </div>
-  );
-};
+export default function Index() {
+  const { user, loading, hasRole } = useAuth();
 
-const Index = PlaceholderIndex;
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center space-y-4">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-muted-foreground font-cairo">جارِ التحميل...</p>
+        </div>
+      </div>
+    );
+  }
 
-export default Index;
+  if (!user) return <Navigate to="/login" replace />;
+
+  if (hasRole("leader")) return <Navigate to="/dashboard" replace />;
+  if (hasRole("data_entry")) return <Navigate to="/data-entry" replace />;
+  if (hasRole("teacher") || hasRole("supervisor")) return <Navigate to="/teacher" replace />;
+  if (hasRole("track_manager")) return <Navigate to="/halaqat" replace />;
+  return <Navigate to="/student" replace />;
+}
