@@ -120,7 +120,79 @@ export function getSurahByNumber(num: number) {
   return SURAHS.find((s) => s.number === num);
 }
 
+// Madinah Mushaf: starting page of each surah (604 pages total)
+export const SURAH_START_PAGE: Record<number, number> = {
+  1: 1, 2: 2, 3: 50, 4: 77, 5: 106, 6: 128, 7: 151, 8: 177, 9: 187, 10: 208,
+  11: 221, 12: 235, 13: 249, 14: 255, 15: 262, 16: 267, 17: 282, 18: 293, 19: 305, 20: 312,
+  21: 322, 22: 332, 23: 342, 24: 350, 25: 359, 26: 367, 27: 377, 28: 385, 29: 396, 30: 404,
+  31: 411, 32: 415, 33: 418, 34: 428, 35: 434, 36: 440, 37: 446, 38: 453, 39: 458, 40: 467,
+  41: 477, 42: 483, 43: 489, 44: 496, 45: 499, 46: 502, 47: 507, 48: 511, 49: 515, 50: 518,
+  51: 520, 52: 523, 53: 526, 54: 528, 55: 531, 56: 534, 57: 537, 58: 542, 59: 545, 60: 549,
+  61: 551, 62: 553, 63: 554, 64: 556, 65: 558, 66: 560, 67: 562, 68: 564, 69: 566, 70: 568,
+  71: 570, 72: 572, 73: 574, 74: 575, 75: 577, 76: 578, 77: 580, 78: 582, 79: 583, 80: 585,
+  81: 586, 82: 587, 83: 587, 84: 589, 85: 590, 86: 591, 87: 591, 88: 592, 89: 593, 90: 594,
+  91: 595, 92: 595, 93: 596, 94: 596, 95: 597, 96: 597, 97: 598, 98: 598, 99: 599, 100: 599,
+  101: 600, 102: 600, 103: 601, 104: 601, 105: 601, 106: 602, 107: 602, 108: 602, 109: 603, 110: 603,
+  111: 603, 112: 604, 113: 604, 114: 604,
+};
+
+// Approximate page (decimal) for a given ayah by linear interpolation within the surah
+export function getPageForAyah(surahNum: number, ayahNum: number): number {
+  const surah = getSurahByNumber(surahNum);
+  if (!surah) return 0;
+  const start = SURAH_START_PAGE[surahNum] ?? 0;
+  const nextStart = SURAH_START_PAGE[surahNum + 1] ?? 605; // end of mushaf
+  const span = nextStart - start;
+  if (surah.ayahCount <= 1) return start;
+  // ayah 1 -> start, ayah ayahCount -> just before nextStart
+  const ratio = (ayahNum - 1) / surah.ayahCount;
+  return start + span * ratio;
+}
+
+/**
+ * Calculate number of "أوجه" (faces = half pages) between two ayahs.
+ * Returns a number (e.g. 2.5 means وجهان ونصف).
+ */
+export function calculateFaces(
+  fromSurah: number, fromAyah: number,
+  toSurah: number, toAyah: number,
+): number {
+  const fromPage = getPageForAyah(fromSurah, fromAyah);
+  // include the "to" ayah: take page of next ayah (or next surah)
+  const toSurahData = getSurahByNumber(toSurah);
+  let toPage: number;
+  if (toSurahData && toAyah >= toSurahData.ayahCount) {
+    toPage = SURAH_START_PAGE[toSurah + 1] ?? 605;
+  } else {
+    toPage = getPageForAyah(toSurah, toAyah + 1);
+  }
+  const pages = Math.max(0, toPage - fromPage);
+  return pages * 2; // 1 page = 2 faces (وجهان)
+}
+
+/** Convenience: pages (not faces) for storage */
+export function calculatePages(
+  fromSurah: number, fromAyah: number,
+  toSurah: number, toAyah: number,
+): number {
+  return calculateFaces(fromSurah, fromAyah, toSurah, toAyah) / 2;
+}
+
+/** Format faces as Arabic fraction string, e.g. 2.5 -> "٢ ½" */
+export function formatFaces(faces: number): string {
+  if (!faces || faces <= 0) return "٠";
+  const whole = Math.floor(faces);
+  const frac = faces - whole;
+  let fracStr = "";
+  if (frac >= 0.875) return `${(whole + 1).toLocaleString("ar-SA")}`;
+  if (frac >= 0.625) fracStr = " ¾";
+  else if (frac >= 0.375) fracStr = " ½";
+  else if (frac >= 0.125) fracStr = " ¼";
+  const wholeStr = whole > 0 ? whole.toLocaleString("ar-SA") : (fracStr ? "" : "٠");
+  return `${wholeStr}${fracStr}`.trim();
+}
+
 export function formatPages(pages: number | null): string {
   if (!pages || pages === 0) return "٠";
-  return pages.toLocaleString("ar-SA", { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+  return formatFaces(pages * 2) + " وجه";
 }
