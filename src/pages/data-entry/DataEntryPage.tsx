@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import AppLayout from "@/components/layout/AppLayout";
@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { SURAHS } from "@/lib/quran-data";
+import { SURAHS, calculateFaces, calculatePages, formatFaces } from "@/lib/quran-data";
 import { Save, UserX } from "lucide-react";
 
 interface StudentEntry {
@@ -18,6 +18,17 @@ interface StudentEntry {
   nearFromSurah: string; nearFromAyah: string; nearToSurah: string; nearToAyah: string;
   farFromSurah: string; farFromAyah: string; farToSurah: string; farToAyah: string;
   tilawaFromSurah: string; tilawaFromAyah: string; tilawaToSurah: string; tilawaToAyah: string;
+}
+
+type Layout = "girls" | "mixed" | "tilawa";
+
+// Determine UI layout from track name (Arabic)
+function getLayoutFromTrackName(name: string): Layout {
+  const n = (name || "").trim();
+  if (n.includes("مشكاة")) return "tilawa";
+  if (n.includes("ألق") || n.includes("الق") || n.includes("سراج") || n.includes("مهج")) return "mixed";
+  // بهور، إشراق، قبس، ضياء، وهج → girls (3 sections)
+  return "girls";
 }
 
 function SurahAyahPicker({ label, surah, ayah, onSurahChange, onAyahChange }: {
@@ -46,6 +57,13 @@ function SurahAyahPicker({ label, surah, ayah, onSurahChange, onAyahChange }: {
   );
 }
 
+function FacesBadge({ from, fa, to, ta }: { from: string; fa: string; to: string; ta: string }) {
+  if (!from || !fa || !to || !ta) return null;
+  const faces = calculateFaces(Number(from), Number(fa), Number(to), Number(ta));
+  if (faces <= 0) return null;
+  return <Badge variant="outline" className="text-xs">الأوجه: {formatFaces(faces)}</Badge>;
+}
+
 export default function DataEntryPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -55,7 +73,6 @@ export default function DataEntryPage() {
   const [selectedHalaqah, setSelectedHalaqah] = useState("");
   const [students, setStudents] = useState<StudentEntry[]>([]);
   const [saving, setSaving] = useState(false);
-  const [trackType, setTrackType] = useState<string>("girls");
 
   useEffect(() => {
     if (!user) return;
@@ -67,11 +84,16 @@ export default function DataEntryPage() {
       ]);
       setTracks(tracksRes.data || []);
       setHalaqat(halaqatRes.data || []);
-      const ids = (assignRes.data || []).map((a) => a.track_id);
-      setAssignedTrackIds(ids);
+      setAssignedTrackIds((assignRes.data || []).map((a) => a.track_id));
     };
     load();
   }, [user]);
+
+  const layout: Layout = useMemo(() => {
+    const halaqah = halaqat.find((h) => h.id === selectedHalaqah);
+    const track = tracks.find((t) => t.id === halaqah?.track_id);
+    return getLayoutFromTrackName(track?.name || "");
+  }, [selectedHalaqah, halaqat, tracks]);
 
   useEffect(() => {
     if (!selectedHalaqah) return;
@@ -82,10 +104,6 @@ export default function DataEntryPage() {
         .eq("halaqah_id", selectedHalaqah)
         .eq("role", "student")
         .eq("is_archived", false);
-
-      const halaqah = halaqat.find((h) => h.id === selectedHalaqah);
-      const track = tracks.find((t) => t.id === halaqah?.track_id);
-      setTrackType(track?.type || "girls");
 
       setStudents((members || []).map((m) => ({
         userId: m.user_id,
@@ -98,7 +116,7 @@ export default function DataEntryPage() {
       })));
     };
     loadStudents();
-  }, [selectedHalaqah, halaqat, tracks]);
+  }, [selectedHalaqah]);
 
   const updateStudent = (idx: number, field: string, value: any) => {
     setStudents((prev) => prev.map((s, i) => i === idx ? { ...s, [field]: value } : s));
@@ -107,35 +125,45 @@ export default function DataEntryPage() {
   const filteredHalaqat = halaqat.filter((h) =>
     assignedTrackIds.includes(h.track_id) && h.name !== "التسجيل"
   );
-
-  // Show all halaqat if user is leader (no assignments)
   const displayHalaqat = assignedTrackIds.length > 0 ? filteredHalaqat : halaqat.filter((h) => h.name !== "التسجيل");
+
+  const calcPagesSafe = (a: string, b: string, c: string, d: string) =>
+    a && b && c && d ? calculatePages(Number(a), Number(b), Number(c), Number(d)) : 0;
 
   const handleSave = async () => {
     setSaving(true);
     const today = new Date().toISOString().split("T")[0];
     for (const s of students) {
+      const showHifz = layout !== "tilawa";
+      const showNear = layout === "girls" || layout === "mixed";
+      const showFar = layout === "girls";
+      const showTilawa = layout === "tilawa";
+
       await supabase.from("daily_records").upsert({
         student_id: s.userId,
         halaqah_id: selectedHalaqah,
         record_date: today,
         is_absent: s.isAbsent,
-        hifz_from_surah: s.hifzFromSurah ? Number(s.hifzFromSurah) : null,
-        hifz_from_ayah: s.hifzFromAyah ? Number(s.hifzFromAyah) : null,
-        hifz_to_surah: s.hifzToSurah ? Number(s.hifzToSurah) : null,
-        hifz_to_ayah: s.hifzToAyah ? Number(s.hifzToAyah) : null,
-        near_review_from_surah: s.nearFromSurah ? Number(s.nearFromSurah) : null,
-        near_review_from_ayah: s.nearFromAyah ? Number(s.nearFromAyah) : null,
-        near_review_to_surah: s.nearToSurah ? Number(s.nearToSurah) : null,
-        near_review_to_ayah: s.nearToAyah ? Number(s.nearToAyah) : null,
-        far_review_from_surah: s.farFromSurah ? Number(s.farFromSurah) : null,
-        far_review_from_ayah: s.farFromAyah ? Number(s.farFromAyah) : null,
-        far_review_to_surah: s.farToSurah ? Number(s.farToSurah) : null,
-        far_review_to_ayah: s.farToAyah ? Number(s.farToAyah) : null,
-        tilawa_from_surah: s.tilawaFromSurah ? Number(s.tilawaFromSurah) : null,
-        tilawa_from_ayah: s.tilawaFromAyah ? Number(s.tilawaFromAyah) : null,
-        tilawa_to_surah: s.tilawaToSurah ? Number(s.tilawaToSurah) : null,
-        tilawa_to_ayah: s.tilawaToAyah ? Number(s.tilawaToAyah) : null,
+        hifz_from_surah: showHifz && s.hifzFromSurah ? Number(s.hifzFromSurah) : null,
+        hifz_from_ayah: showHifz && s.hifzFromAyah ? Number(s.hifzFromAyah) : null,
+        hifz_to_surah: showHifz && s.hifzToSurah ? Number(s.hifzToSurah) : null,
+        hifz_to_ayah: showHifz && s.hifzToAyah ? Number(s.hifzToAyah) : null,
+        hifz_pages: showHifz ? calcPagesSafe(s.hifzFromSurah, s.hifzFromAyah, s.hifzToSurah, s.hifzToAyah) : 0,
+        near_review_from_surah: showNear && s.nearFromSurah ? Number(s.nearFromSurah) : null,
+        near_review_from_ayah: showNear && s.nearFromAyah ? Number(s.nearFromAyah) : null,
+        near_review_to_surah: showNear && s.nearToSurah ? Number(s.nearToSurah) : null,
+        near_review_to_ayah: showNear && s.nearToAyah ? Number(s.nearToAyah) : null,
+        near_review_pages: showNear ? calcPagesSafe(s.nearFromSurah, s.nearFromAyah, s.nearToSurah, s.nearToAyah) : 0,
+        far_review_from_surah: showFar && s.farFromSurah ? Number(s.farFromSurah) : null,
+        far_review_from_ayah: showFar && s.farFromAyah ? Number(s.farFromAyah) : null,
+        far_review_to_surah: showFar && s.farToSurah ? Number(s.farToSurah) : null,
+        far_review_to_ayah: showFar && s.farToAyah ? Number(s.farToAyah) : null,
+        far_review_pages: showFar ? calcPagesSafe(s.farFromSurah, s.farFromAyah, s.farToSurah, s.farToAyah) : 0,
+        tilawa_from_surah: showTilawa && s.tilawaFromSurah ? Number(s.tilawaFromSurah) : null,
+        tilawa_from_ayah: showTilawa && s.tilawaFromAyah ? Number(s.tilawaFromAyah) : null,
+        tilawa_to_surah: showTilawa && s.tilawaToSurah ? Number(s.tilawaToSurah) : null,
+        tilawa_to_ayah: showTilawa && s.tilawaToAyah ? Number(s.tilawaToAyah) : null,
+        tilawa_pages: showTilawa ? calcPagesSafe(s.tilawaFromSurah, s.tilawaFromAyah, s.tilawaToSurah, s.tilawaToAyah) : 0,
         entered_by: user?.id,
       }, { onConflict: "student_id,record_date" });
     }
@@ -143,10 +171,11 @@ export default function DataEntryPage() {
     setSaving(false);
   };
 
-  const showHifz = true;
-  const showNear = trackType === "girls";
-  const showFar = trackType === "girls";
-  const showTilawa = trackType === "tilawa" || trackType === "girls";
+  const showHifz = layout !== "tilawa";
+  const showNear = layout === "girls" || layout === "mixed";
+  const showFar = layout === "girls";
+  const showTilawa = layout === "tilawa";
+  const nearLabel = layout === "girls" ? "مراجعة قريبة" : "مراجعة";
 
   return (
     <AppLayout>
@@ -180,7 +209,10 @@ export default function DataEntryPage() {
                   <CardContent className="py-2 px-4 space-y-2">
                     {showHifz && (
                       <div className="space-y-1">
-                        <Badge variant="secondary" className="text-xs mb-1">حفظ</Badge>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="secondary" className="text-xs">حفظ</Badge>
+                          <FacesBadge from={s.hifzFromSurah} fa={s.hifzFromAyah} to={s.hifzToSurah} ta={s.hifzToAyah} />
+                        </div>
                         <div className="grid grid-cols-2 gap-2">
                           <SurahAyahPicker label="من" surah={s.hifzFromSurah} ayah={s.hifzFromAyah}
                             onSurahChange={(v) => updateStudent(idx, "hifzFromSurah", v)}
@@ -193,7 +225,10 @@ export default function DataEntryPage() {
                     )}
                     {showNear && (
                       <div className="space-y-1">
-                        <Badge variant="secondary" className="text-xs mb-1">مراجعة قريبة</Badge>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="secondary" className="text-xs">{nearLabel}</Badge>
+                          <FacesBadge from={s.nearFromSurah} fa={s.nearFromAyah} to={s.nearToSurah} ta={s.nearToAyah} />
+                        </div>
                         <div className="grid grid-cols-2 gap-2">
                           <SurahAyahPicker label="من" surah={s.nearFromSurah} ayah={s.nearFromAyah}
                             onSurahChange={(v) => updateStudent(idx, "nearFromSurah", v)}
@@ -206,7 +241,10 @@ export default function DataEntryPage() {
                     )}
                     {showFar && (
                       <div className="space-y-1">
-                        <Badge variant="secondary" className="text-xs mb-1">مراجعة بعيدة</Badge>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="secondary" className="text-xs">مراجعة بعيدة</Badge>
+                          <FacesBadge from={s.farFromSurah} fa={s.farFromAyah} to={s.farToSurah} ta={s.farToAyah} />
+                        </div>
                         <div className="grid grid-cols-2 gap-2">
                           <SurahAyahPicker label="من" surah={s.farFromSurah} ayah={s.farFromAyah}
                             onSurahChange={(v) => updateStudent(idx, "farFromSurah", v)}
@@ -219,7 +257,10 @@ export default function DataEntryPage() {
                     )}
                     {showTilawa && (
                       <div className="space-y-1">
-                        <Badge variant="secondary" className="text-xs mb-1">تلاوة</Badge>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="secondary" className="text-xs">تلاوة</Badge>
+                          <FacesBadge from={s.tilawaFromSurah} fa={s.tilawaFromAyah} to={s.tilawaToSurah} ta={s.tilawaToAyah} />
+                        </div>
                         <div className="grid grid-cols-2 gap-2">
                           <SurahAyahPicker label="من" surah={s.tilawaFromSurah} ayah={s.tilawaFromAyah}
                             onSurahChange={(v) => updateStudent(idx, "tilawaFromSurah", v)}
